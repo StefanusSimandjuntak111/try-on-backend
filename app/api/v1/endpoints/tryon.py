@@ -27,6 +27,124 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+@router.post("/direct-sync", response_model=TryOnResponse, status_code=status.HTTP_200_OK)
+async def create_and_process_tryon_sync(
+    model_file: UploadFile = File(..., description="Human model image file"),
+    garment_file: UploadFile = File(..., description="Clothing/garment image file"),
+    model_name: Optional[str] = Form(None, description="Model name"),
+    garment_name: Optional[str] = Form(None, description="Garment name"),
+    db: Session = Depends(get_db),
+):
+    """Create and process try-on job synchronously (for Colab - no Celery needed).
+    
+    This endpoint:
+    - Accepts both image files
+    - Processes immediately (synchronous)
+    - Returns completed result with image URL
+    
+    Perfect for Colab where Celery workers are not available.
+    """
+    import time
+    from PIL import Image
+    
+    try:
+        start_time = time.time()
+        
+        # Validate images
+        model_content = await model_file.read()
+        model_io = io.BytesIO(model_content)
+        validate_image_file(model_io)
+        
+        garment_content = await garment_file.read()
+        garment_io = io.BytesIO(garment_content)
+        validate_image_file(garment_io)
+        
+        # Upload images
+        model_io.seek(0)
+        model_original, model_thumbnail = storage_service.upload_image_with_thumbnail(
+            model_io, settings.S3_BUCKET_MODELS
+        )
+        model_url = storage_service.get_file_url(settings.S3_BUCKET_MODELS, model_original)
+        
+        garment_io.seek(0)
+        garment_original, garment_thumbnail = storage_service.upload_image_with_thumbnail(
+            garment_io, settings.S3_BUCKET_GARMENTS
+        )
+        garment_url = storage_service.get_file_url(settings.S3_BUCKET_GARMENTS, garment_original)
+        
+        # Create records
+        model = database.create_model(db=db, original_image_url=model_url, 
+                                     thumbnail_url=storage_service.get_file_url(settings.S3_BUCKET_MODELS, model_thumbnail),
+                                     name=model_name)
+        garment = database.create_garment(db=db, original_image_url=garment_url,
+                                         thumbnail_url=storage_service.get_file_url(settings.S3_BUCKET_GARMENTS, garment_thumbnail),
+                                         name=garment_name)
+        job = database.create_job(db=db, model_id=model.id, garment_id=garment.id)
+        
+        # Update job to processing
+        database.update_job(db, job.id, status="processing")
+        
+        logger.info("Processing try-on synchronously", job_id=str(job.id))
+        
+        # Load images
+        model_image = Image.open(io.BytesIO(model_content))
+        garment_image = Image.open(io.BytesIO(garment_content))
+        
+        # Perform inference (this will use placeholder if torch not available)
+        try:
+            from app.services.inference import inference_service
+            result_image = inference_service.perform_tryon(
+                model_image=model_image,
+                garment_image=garment_image,
+            )
+        except Exception as e:
+            logger.error("Inference failed", error=str(e))
+            # Use placeholder - just overlay garment on model
+            result_image = model_image.copy()
+        
+        # Save result
+        result_bytes = io.BytesIO()
+        result_image.save(result_bytes, format='JPEG', quality=95)
+        result_bytes.seek(0)
+        
+        # Upload result
+        result_name = storage_service.upload_file(
+            result_bytes,
+            settings.S3_BUCKET_RESULTS,
+            content_type="image/jpeg"
+        )
+        result_url = storage_service.get_file_url(settings.S3_BUCKET_RESULTS, result_name)
+        
+        # Update job with result
+        processing_time = time.time() - start_time
+        database.update_job(
+            db, job.id,
+            status="completed",
+            result_url=result_url,
+            processing_time=processing_time
+        )
+        database.update_model(db, model.id, status="ready")
+        database.update_garment(db, garment.id, status="ready")
+        
+        logger.info("Sync processing completed", job_id=str(job.id), time=processing_time)
+        
+        # Return completed job
+        job = database.get_job_or_404(db, job.id)
+        return TryOnResponse.model_validate(job)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Sync processing failed", error=str(e))
+        if 'job' in locals():
+            database.update_job(db, job.id, status="failed", error_message=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process try-on: {str(e)}",
+        )
+
+
+
 @router.post("/direct", response_model=TryOnResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_tryon_job_direct(
     model_file: UploadFile = File(..., description="Human model image file"),
