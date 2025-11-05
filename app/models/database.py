@@ -5,10 +5,45 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import JSON, Column, Float, ForeignKey, String, Text, TIMESTAMP
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PostgreSQL_UUID
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.types import TypeDecorator, CHAR
 
 Base = declarative_base()
+
+
+class GUID(TypeDecorator):
+    """Platform-independent GUID type.
+    Uses PostgreSQL's UUID type, otherwise uses CHAR(36), storing as stringified hex values.
+    """
+    impl = CHAR
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'postgresql':
+            return dialect.type_descriptor(PostgreSQL_UUID(as_uuid=True))
+        else:
+            return dialect.type_descriptor(CHAR(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        elif dialect.name == 'postgresql':
+            return value
+        else:
+            if isinstance(value, uuid.UUID):
+                return str(value)
+            else:
+                return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        else:
+            if not isinstance(value, uuid.UUID):
+                return uuid.UUID(value)
+            else:
+                return value
 
 
 class Model(Base):
@@ -16,7 +51,7 @@ class Model(Base):
 
     __tablename__ = "models"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=True)
     original_image_url = Column(Text, nullable=False)
     thumbnail_url = Column(Text, nullable=True)
@@ -42,7 +77,7 @@ class Garment(Base):
 
     __tablename__ = "garments"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=True)
     original_image_url = Column(Text, nullable=False)
     thumbnail_url = Column(Text, nullable=True)
@@ -70,9 +105,9 @@ class TryOnJob(Base):
 
     __tablename__ = "tryon_jobs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    model_id = Column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=False)
-    garment_id = Column(UUID(as_uuid=True), ForeignKey("garments.id"), nullable=False)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    model_id = Column(GUID(), ForeignKey("models.id"), nullable=False)
+    garment_id = Column(GUID(), ForeignKey("garments.id"), nullable=False)
     result_url = Column(Text, nullable=True)
     status = Column(
         String(50), nullable=False, default="queued"

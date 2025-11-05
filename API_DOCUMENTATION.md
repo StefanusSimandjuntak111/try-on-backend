@@ -31,7 +31,7 @@ Upload both images directly and get the fitted result in one request.
 
 **Example:**
 ```bash
-curl -X POST "http://localhost:9000/api/v1/tryon/direct" \
+curl -X POST "http://localhost:8500/api/v1/tryon/direct" \
   -F "model_file=@person.jpg" \
   -F "garment_file=@shirt.jpg" \
   -F "model_name=Person 1" \
@@ -59,7 +59,7 @@ Create a try-on job using already uploaded model and garment.
 
 **Example:**
 ```bash
-curl -X POST "http://localhost:9000/api/v1/tryon" \
+curl -X POST "http://localhost:8500/api/v1/tryon" \
   -H "Content-Type: application/json" \
   -d '{
     "model_id": "123e4567-e89b-12d3-a456-426614174000",
