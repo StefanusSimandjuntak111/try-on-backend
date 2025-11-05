@@ -1,11 +1,21 @@
 """FastAPI application entry point."""
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1.router import api_router
 from app.config import settings
+from app.core.exceptions import TryOnException
+from app.core.handlers import (
+    general_exception_handler,
+    sqlalchemy_exception_handler,
+    tryon_exception_handler,
+    validation_exception_handler,
+)
 from app.core.logging import setup_logging
+from app.core.middleware import RequestLoggingMiddleware
 
 # Setup logging
 setup_logging()
@@ -18,7 +28,14 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS middleware
+# Exception handlers
+app.add_exception_handler(TryOnException, tryon_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
+app.add_exception_handler(Exception, general_exception_handler)
+
+# Middleware (order matters - last added is first executed)
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Configure appropriately for production
