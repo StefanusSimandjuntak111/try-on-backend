@@ -1,0 +1,240 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    container_name: tryon-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tryon_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tryon_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tryon_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tryon_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tryon-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: tryon-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tryon-network
+
+  # MinIO (S3-compatible storage)
+  minio:
+    image: minio/minio:latest
+    container_name: tryon-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - tryon-network
+
+  # MinIO Client (for bucket initialization)
+  minio-setup:
+    image: minio/mc:latest
+    container_name: tryon-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      mc mb myminio/${S3_BUCKET_MODELS:-models} || true;
+      mc mb myminio/${S3_BUCKET_GARMENTS:-garments} || true;
+      mc mb myminio/${S3_BUCKET_RESULTS:-results} || true;
+      mc anonymous set download myminio/${S3_BUCKET_MODELS:-models} || true;
+      mc anonymous set download myminio/${S3_BUCKET_GARMENTS:-garments} || true;
+      mc anonymous set download myminio/${S3_BUCKET_RESULTS:-results} || true;
+      echo 'MinIO buckets initialized';
+      "
+    networks:
+      - tryon-network
+
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tryon-api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tryon_user}:${POSTGRES_PASSWORD:-tryon_password}@postgres:5432/${POSTGRES_DB:-tryon_db}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ML_DEVICE: ${ML_DEVICE:-cpu}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./weights:/app/weights
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - ./results:/app/results
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
+    command: >
+      sh -c "
+      alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      "
+    networks:
+      - tryon-network
+
+  # Celery Worker (Preprocessing)
+  celery-preprocessing:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tryon-celery-preprocessing
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tryon_user}:${POSTGRES_PASSWORD:-tryon_password}@postgres:5432/${POSTGRES_DB:-tryon_db}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ML_DEVICE: ${ML_DEVICE:-cpu}
+    volumes:
+      - ./weights:/app/weights
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - ./results:/app/results
+    depends_on:
+      - postgres
+      - redis
+      - minio-setup
+    command: celery -A app.workers.celery_app worker --loglevel=info --queues=preprocessing --concurrency=2
+    networks:
+      - tryon-network
+
+  # Celery Worker (Inference)
+  celery-inference:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tryon-celery-inference
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tryon_user}:${POSTGRES_PASSWORD:-tryon_password}@postgres:5432/${POSTGRES_DB:-tryon_db}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ML_DEVICE: ${ML_DEVICE:-cpu}
+    volumes:
+      - ./weights:/app/weights
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - ./results:/app/results
+    depends_on:
+      - postgres
+      - redis
+      - minio-setup
+    command: celery -A app.workers.celery_app worker --loglevel=info --queues=inference --concurrency=1
+    networks:
+      - tryon-network
+
+  # Celery Worker (Maintenance)
+  celery-maintenance:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tryon-celery-maintenance
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tryon_user}:${POSTGRES_PASSWORD:-tryon_password}@postgres:5432/${POSTGRES_DB:-tryon_db}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ML_DEVICE: ${ML_DEVICE:-cpu}
+    volumes:
+      - ./weights:/app/weights
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - ./results:/app/results
+    depends_on:
+      - postgres
+      - redis
+      - minio-setup
+    command: celery -A app.workers.celery_app worker --loglevel=info --queues=maintenance --concurrency=1
+    networks:
+      - tryon-network
+
+  # Celery Beat (Scheduler)
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tryon-celery-beat
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tryon_user}:${POSTGRES_PASSWORD:-tryon_password}@postgres:5432/${POSTGRES_DB:-tryon_db}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ML_DEVICE: ${ML_DEVICE:-cpu}
+    volumes:
+      - ./weights:/app/weights
+      - ./uploads:/app/uploads
+      - ./temp:/app/temp
+      - ./results:/app/results
+    depends_on:
+      - postgres
+      - redis
+      - minio-setup
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    networks:
+      - tryon-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  tryon-network:
+    driver: bridge
+

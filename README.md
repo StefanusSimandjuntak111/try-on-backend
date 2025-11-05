@@ -26,7 +26,7 @@ A FastAPI-based backend for AI-powered virtual try-on system that generates real
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/StefanusSimandjuntak111/try-on-backend.git
 cd try-on-backend
 ```
 
@@ -60,8 +60,50 @@ uvicorn app.main:app --reload
 
 ### Docker Setup
 
+1. Copy environment file:
+```bash
+cp .env.example .env
+# Edit .env with your configuration if needed
+```
+
+2. Start all services:
 ```bash
 docker-compose up --build
+```
+
+3. The application will be available at:
+   - API: http://localhost:8000
+   - API Docs: http://localhost:8000/docs
+   - MinIO Console: http://localhost:9001 (default: minioadmin/minioadmin)
+
+4. Services included:
+   - **api**: FastAPI application
+   - **postgres**: PostgreSQL database
+   - **redis**: Redis cache and message broker
+   - **minio**: S3-compatible object storage
+   - **celery-preprocessing**: Worker for image preprocessing
+   - **celery-inference**: Worker for ML inference
+   - **celery-maintenance**: Worker for maintenance tasks
+   - **celery-beat**: Task scheduler
+
+5. To run in detached mode:
+```bash
+docker-compose up -d --build
+```
+
+6. To view logs:
+```bash
+docker-compose logs -f [service-name]
+```
+
+7. To stop services:
+```bash
+docker-compose down
+```
+
+8. To remove volumes (clean data):
+```bash
+docker-compose down -v
 ```
 
 ## 📚 API Documentation
