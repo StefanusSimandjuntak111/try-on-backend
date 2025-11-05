@@ -4,16 +4,17 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 
 # Base schemas
 class BaseSchema(BaseModel):
     """Base schema with common configuration."""
 
-    class Config:
-        from_attributes = True
-        json_encoders = {UUID: str}
+    model_config = ConfigDict(
+        from_attributes=True,
+        protected_namespaces=(),  # Disable protected namespace check for model_* fields
+    )
 
 
 # Model schemas
@@ -41,10 +42,21 @@ class ModelResponse(BaseSchema):
     original_image_url: str
     thumbnail_url: Optional[str]
     preprocessed_data: Optional[dict[str, Any]]
-    metadata: Optional[dict[str, Any]]
+    metadata: Optional[dict[str, Any]] = None
     status: str
     created_at: datetime
     updated_at: datetime
+
+    @classmethod
+    def model_validate(cls, obj, *, from_attributes=True, **kwargs):
+        """Override model_validate to map extra_metadata to metadata."""
+        if hasattr(obj, '__dict__'):
+            # Convert SQLAlchemy model to dict, mapping extra_metadata to metadata
+            data = obj.__dict__.copy()
+            if 'extra_metadata' in data:
+                data['metadata'] = data.pop('extra_metadata')
+            return super().model_validate(data, from_attributes=from_attributes, **kwargs)
+        return super().model_validate(obj, from_attributes=from_attributes, **kwargs)
 
 
 class ModelListResponse(BaseSchema):
@@ -80,10 +92,29 @@ class GarmentResponse(BaseSchema):
     original_image_url: str
     thumbnail_url: Optional[str]
     preprocessed_data: Optional[dict[str, Any]]
-    metadata: Optional[dict[str, Any]]
+    metadata: Optional[dict[str, Any]] = None
     status: str
     created_at: datetime
     updated_at: datetime
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        """Override model_validate to map extra_metadata to metadata."""
+        if hasattr(obj, 'extra_metadata'):
+            # Create a dict from the object and map extra_metadata to metadata
+            data = {
+                'id': obj.id,
+                'name': obj.name,
+                'original_image_url': obj.original_image_url,
+                'thumbnail_url': obj.thumbnail_url,
+                'preprocessed_data': obj.preprocessed_data,
+                'metadata': obj.extra_metadata,  # Map extra_metadata to metadata
+                'status': obj.status,
+                'created_at': obj.created_at,
+                'updated_at': obj.updated_at,
+            }
+            return super().model_validate(data, **kwargs)
+        return super().model_validate(obj, **kwargs)
 
 
 class GarmentListResponse(BaseSchema):

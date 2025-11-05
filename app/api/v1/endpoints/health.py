@@ -6,10 +6,35 @@ from fastapi import APIRouter
 
 from app.core.logging import get_logger
 from app.models.schemas import HealthResponse, ModelsHealthResponse
-from app.ml.background.model import get_u2net_model
-from app.ml.hrviton.model import get_hrviton_model
-from app.ml.parsing.model import get_schp_model
-from app.ml.pose.model import get_openpose_model
+
+# Optional ML model imports (for graceful degradation)
+try:
+    from app.ml.background.model import get_u2net_model
+    U2NET_AVAILABLE = True
+except ImportError:
+    U2NET_AVAILABLE = False
+    get_u2net_model = None
+
+try:
+    from app.ml.hrviton.model import get_hrviton_model
+    HRVITON_AVAILABLE = True
+except ImportError:
+    HRVITON_AVAILABLE = False
+    get_hrviton_model = None
+
+try:
+    from app.ml.parsing.model import get_schp_model
+    SCHP_AVAILABLE = True
+except ImportError:
+    SCHP_AVAILABLE = False
+    get_schp_model = None
+
+try:
+    from app.ml.pose.model import get_openpose_model
+    OPENPOSE_AVAILABLE = True
+except ImportError:
+    OPENPOSE_AVAILABLE = False
+    get_openpose_model = None
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -30,64 +55,88 @@ async def models_health():
     models_status = {}
     
     # Check U2-Net
-    try:
-        u2net = get_u2net_model()
+    if not U2NET_AVAILABLE:
         models_status["u2net"] = {
-            "status": "loaded" if u2net.model is not None else "not_loaded",
-            "device": str(u2net.device),
-            "checkpoint": u2net.checkpoint_path,
+            "status": "not_available",
+            "error": "U2-Net model not available (torch not installed)",
         }
-    except Exception as e:
-        logger.error("Failed to check U2-Net status", error=str(e))
-        models_status["u2net"] = {
-            "status": "error",
-            "error": str(e),
-        }
+    else:
+        try:
+            u2net = get_u2net_model()
+            models_status["u2net"] = {
+                "status": "loaded" if u2net.model is not None else "not_loaded",
+                "device": str(u2net.device),
+                "checkpoint": u2net.checkpoint_path,
+            }
+        except Exception as e:
+            logger.error("Failed to check U2-Net status", error=str(e))
+            models_status["u2net"] = {
+                "status": "error",
+                "error": str(e),
+            }
     
     # Check SCHP
-    try:
-        schp = get_schp_model()
+    if not SCHP_AVAILABLE:
         models_status["schp"] = {
-            "status": "loaded" if schp.model is not None else "not_loaded",
-            "device": str(schp.device),
-            "checkpoint": schp.checkpoint_path,
+            "status": "not_available",
+            "error": "SCHP model not available (torch not installed)",
         }
-    except Exception as e:
-        logger.error("Failed to check SCHP status", error=str(e))
-        models_status["schp"] = {
-            "status": "error",
-            "error": str(e),
-        }
+    else:
+        try:
+            schp = get_schp_model()
+            models_status["schp"] = {
+                "status": "loaded" if schp.model is not None else "not_loaded",
+                "device": str(schp.device),
+                "checkpoint": schp.checkpoint_path,
+            }
+        except Exception as e:
+            logger.error("Failed to check SCHP status", error=str(e))
+            models_status["schp"] = {
+                "status": "error",
+                "error": str(e),
+            }
     
     # Check OpenPose
-    try:
-        openpose = get_openpose_model()
+    if not OPENPOSE_AVAILABLE:
         models_status["openpose"] = {
-            "status": "loaded" if openpose.model is not None else "not_loaded",
-            "device": str(openpose.device),
-            "checkpoint": openpose.checkpoint_path,
+            "status": "not_available",
+            "error": "OpenPose model not available (torch not installed)",
         }
-    except Exception as e:
-        logger.error("Failed to check OpenPose status", error=str(e))
-        models_status["openpose"] = {
-            "status": "error",
-            "error": str(e),
-        }
+    else:
+        try:
+            openpose = get_openpose_model()
+            models_status["openpose"] = {
+                "status": "loaded" if openpose.model is not None else "not_loaded",
+                "device": str(openpose.device),
+                "checkpoint": openpose.checkpoint_path,
+            }
+        except Exception as e:
+            logger.error("Failed to check OpenPose status", error=str(e))
+            models_status["openpose"] = {
+                "status": "error",
+                "error": str(e),
+            }
     
     # Check HR-VITON
-    try:
-        hrviton = get_hrviton_model()
+    if not HRVITON_AVAILABLE:
         models_status["hrviton"] = {
-            "status": "loaded" if hrviton.model is not None else "not_loaded",
-            "device": str(hrviton.device),
-            "checkpoint": hrviton.checkpoint_path,
+            "status": "not_available",
+            "error": "HR-VITON model not available (torch not installed)",
         }
-    except Exception as e:
-        logger.error("Failed to check HR-VITON status", error=str(e))
-        models_status["hrviton"] = {
-            "status": "error",
-            "error": str(e),
-        }
+    else:
+        try:
+            hrviton = get_hrviton_model()
+            models_status["hrviton"] = {
+                "status": "loaded" if hrviton.model is not None else "not_loaded",
+                "device": str(hrviton.device),
+                "checkpoint": hrviton.checkpoint_path,
+            }
+        except Exception as e:
+            logger.error("Failed to check HR-VITON status", error=str(e))
+            models_status["hrviton"] = {
+                "status": "error",
+                "error": str(e),
+            }
     
     # Determine overall status
     all_loaded = all(

@@ -82,8 +82,8 @@ docker-compose up --build
 ```
 
 3. The application will be available at:
-   - API: http://localhost:8000
-   - API Docs: http://localhost:8000/docs
+   - API: http://localhost:9000
+   - API Docs: http://localhost:9000/docs
    - MinIO Console: http://localhost:9001 (default: minioadmin/minioadmin)
 
 4. Services included:
@@ -119,8 +119,8 @@ docker-compose down -v
 ## 📚 API Documentation
 
 Once the server is running, access the interactive API documentation at:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+- Swagger UI: http://localhost:9000/docs
+- ReDoc: http://localhost:9000/redoc
 
 For detailed API usage and examples, see [API_DOCUMENTATION.md](API_DOCUMENTATION.md).
 
@@ -128,14 +128,14 @@ For detailed API usage and examples, see [API_DOCUMENTATION.md](API_DOCUMENTATIO
 
 **Direct upload (recommended):**
 ```bash
-curl -X POST "http://localhost:8000/api/v1/tryon/direct" \
+curl -X POST "http://localhost:9000/api/v1/tryon/direct" \
   -F "model_file=@person.jpg" \
   -F "garment_file=@clothing.jpg"
 ```
 
 **Get result:**
 ```bash
-curl "http://localhost:8000/api/v1/tryon/{job_id}"
+curl "http://localhost:9000/api/v1/tryon/{job_id}"
 ```
 
 The response contains `result_url` which points to the final fitted image (clothing on model).

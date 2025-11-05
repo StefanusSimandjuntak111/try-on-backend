@@ -18,7 +18,9 @@ from app.models.schemas import (
     TryOnStatusResponse,
     UploadResponse,
 )
-from app.services import cache_service, database, storage_service
+from app.services import database
+from app.services.cache import cache_service
+from app.services.storage import storage_service
 from app.services.validation import validate_image_file
 
 router = APIRouter()

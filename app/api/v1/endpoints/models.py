@@ -12,7 +12,9 @@ from app.core.exceptions import ImageValidationError, ModelNotFoundError
 from app.core.logging import get_logger
 from app.dependencies import get_db
 from app.models.schemas import ModelListResponse, ModelResponse, UploadResponse
-from app.services import cache_service, database, storage_service
+from app.services import database
+from app.services.cache import cache_service
+from app.services.storage import storage_service
 from app.services.validation import validate_image_file
 
 router = APIRouter()

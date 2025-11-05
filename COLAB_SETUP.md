@@ -107,7 +107,7 @@ def run_server():
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=9000,
         log_level="info"
     )
 
@@ -120,7 +120,7 @@ server_process.start()
 print("⏳ Waiting for server to start...")
 for i in range(30):
     try:
-        response = requests.get("http://localhost:8000/", timeout=2)
+        response = requests.get("http://localhost:9000/", timeout=2)
         if response.status_code == 200:
             print("✅ Server is running!")
             break
@@ -142,7 +142,7 @@ if NGROK_AUTHTOKEN:
     ngrok.set_auth_token(NGROK_AUTHTOKEN)
 
 # Verify server is running
-response = requests.get("http://localhost:8000/", timeout=2)
+response = requests.get("http://localhost:9000/", timeout=2)
 if response.status_code == 200:
     # Start ngrok tunnel
     public_url = ngrok.connect(8000, bind_tls=True)
@@ -159,8 +159,8 @@ else:
 ```
 
 Access the API at:
-- API: `http://localhost:8000`
-- Docs: `http://localhost:8000/docs`
+- API: `http://localhost:9000`
+- Docs: `http://localhost:9000/docs`
 
 ## Features in Colab
 
@@ -216,7 +216,7 @@ drive.mount('/content/drive')
 ### Port Already in Use
 ```python
 # Kill existing process
-!lsof -ti:8000 | xargs kill -9
+!lsof -ti:9000 | xargs kill -9
 ```
 
 ### ngrok Connection Refused (ERR_NGROK_8012)
@@ -227,13 +227,13 @@ This error means ngrok can't connect to the server. **The server must be running
 1. Make sure you've run the server cell first
 2. Wait for "✅ Server is running!" message
 3. Then run the ngrok cell
-4. Verify server is running: `requests.get("http://localhost:8000/")`
+4. Verify server is running: `requests.get("http://localhost:9000/")`
 
 **Check if server is running:**
 ```python
 import requests
 try:
-    response = requests.get("http://localhost:8000/", timeout=2)
+    response = requests.get("http://localhost:9000/", timeout=2)
     print(f"✅ Server is running (Status: {response.status_code})")
 except Exception as e:
     print(f"❌ Server is NOT running: {e}")

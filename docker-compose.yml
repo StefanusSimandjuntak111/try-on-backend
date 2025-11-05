@@ -96,7 +96,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       ML_DEVICE: ${ML_DEVICE:-cpu}
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-9000}:9000"
     volumes:
       - ./weights:/app/weights
       - ./uploads:/app/uploads
@@ -112,7 +112,7 @@ services:
     command: >
       sh -c "
       alembic upgrade head &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      uvicorn app.main:app --host 0.0.0.0 --port 9000
       "
     networks:
       - tryon-network

@@ -33,16 +33,6 @@ class Model(Base):
     # Relationships
     tryon_jobs = relationship("TryOnJob", back_populates="model", cascade="all, delete-orphan")
 
-    @property
-    def metadata(self) -> Any:
-        """Property to access extra_metadata as metadata for API compatibility."""
-        return self.extra_metadata
-
-    @metadata.setter
-    def metadata(self, value: Any) -> None:
-        """Property setter for metadata."""
-        self.extra_metadata = value
-
     def __repr__(self) -> str:
         return f"<Model(id={self.id}, name={self.name}, status={self.status})>"
 
@@ -70,16 +60,6 @@ class Garment(Base):
     tryon_jobs = relationship(
         "TryOnJob", back_populates="garment", cascade="all, delete-orphan"
     )
-
-    @property
-    def metadata(self) -> Any:
-        """Property to access extra_metadata as metadata for API compatibility."""
-        return self.extra_metadata
-
-    @metadata.setter
-    def metadata(self, value: Any) -> None:
-        """Property setter for metadata."""
-        self.extra_metadata = value
 
     def __repr__(self) -> str:
         return f"<Garment(id={self.id}, name={self.name}, status={self.status})>"
