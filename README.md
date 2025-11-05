@@ -53,7 +53,17 @@ cp .env.example .env
 alembic upgrade head
 ```
 
-6. Run the application:
+6. Download model weights (optional):
+```bash
+# Install gdown for Google Drive downloads
+pip install gdown
+
+# Download weights
+python scripts/download_weights.py --show-instructions
+```
+See [WEIGHTS_DOWNLOAD.md](WEIGHTS_DOWNLOAD.md) for detailed instructions.
+
+7. Run the application:
 ```bash
 uvicorn app.main:app --reload
 ```

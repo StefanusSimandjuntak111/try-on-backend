@@ -1,24 +1,166 @@
 """Try-on processing endpoints."""
 
+import io
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import GarmentNotFoundError, JobNotFoundError, ModelNotFoundError
+from app.config import settings
+from app.core.exceptions import GarmentNotFoundError, ImageValidationError, JobNotFoundError, ModelNotFoundError
 from app.core.logging import get_logger
 from app.dependencies import get_db
 from app.models.schemas import (
     TryOnCreate,
     TryOnResponse,
     TryOnStatusResponse,
+    UploadResponse,
 )
 from app.services import cache_service, database, storage_service
+from app.services.validation import validate_image_file
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+@router.post("/direct", response_model=TryOnResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_tryon_job_direct(
+    model_file: UploadFile = File(..., description="Human model image file"),
+    garment_file: UploadFile = File(..., description="Clothing/garment image file"),
+    model_name: Optional[str] = Form(None, description="Model name"),
+    garment_name: Optional[str] = Form(None, description="Garment name"),
+    options: Optional[str] = Form(None, description="JSON options"),
+    db: Session = Depends(get_db),
+):
+    """Create a try-on job directly with two image files.
+    
+    This endpoint accepts:
+    - **model_file**: Human model image (person photo)
+    - **garment_file**: Clothing/garment image
+    
+    Returns:
+    - **job_id**: ID to track the processing job
+    - **status**: Current job status
+    - **result_url**: URL to the final fitted image (clothing on model) when completed
+    
+    The result will be the fitting of the clothing to the model image.
+    """
+    try:
+        # Validate model image
+        model_content = await model_file.read()
+        model_io = io.BytesIO(model_content)
+        try:
+            validate_image_file(model_io)
+        except ImageValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid model image: {str(e)}",
+            )
+        
+        # Validate garment image
+        garment_content = await garment_file.read()
+        garment_io = io.BytesIO(garment_content)
+        try:
+            validate_image_file(garment_io)
+        except ImageValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid garment image: {str(e)}",
+            )
+        
+        # Parse options if provided
+        options_dict = None
+        if options:
+            import json
+            try:
+                options_dict = json.loads(options)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid JSON options",
+                )
+        
+        # Upload model image
+        model_io.seek(0)
+        model_original, model_thumbnail = storage_service.upload_image_with_thumbnail(
+            model_io,
+            settings.S3_BUCKET_MODELS,
+        )
+        model_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_MODELS}/{model_original}"
+        model_thumbnail_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_MODELS}/{model_thumbnail}"
+        
+        # Upload garment image
+        garment_io.seek(0)
+        garment_original, garment_thumbnail = storage_service.upload_image_with_thumbnail(
+            garment_io,
+            settings.S3_BUCKET_GARMENTS,
+        )
+        garment_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_GARMENTS}/{garment_original}"
+        garment_thumbnail_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_GARMENTS}/{garment_thumbnail}"
+        
+        # Create model record
+        model = database.create_model(
+            db=db,
+            original_image_url=model_url,
+            thumbnail_url=model_thumbnail_url,
+            name=model_name,
+        )
+        
+        # Create garment record
+        garment = database.create_garment(
+            db=db,
+            original_image_url=garment_url,
+            thumbnail_url=garment_thumbnail_url,
+            name=garment_name,
+        )
+        
+        # Create try-on job
+        job = database.create_job(
+            db=db,
+            model_id=model.id,
+            garment_id=garment.id,
+            options=options_dict,
+        )
+        
+        logger.info(
+            "Direct try-on job created",
+            job_id=str(job.id),
+            model_id=str(model.id),
+            garment_id=str(garment.id),
+        )
+        
+        # Trigger preprocessing and inference tasks
+        from app.workers.tasks import preprocess_model_task, preprocess_garment_task, tryon_inference_task
+        
+        # Preprocess both images
+        preprocess_model_task.delay(str(model.id))
+        preprocess_garment_task.delay(str(garment.id))
+        
+        # Trigger inference (will wait for preprocessing)
+        tryon_inference_task.delay(str(job.id))
+        
+        # Cache job status
+        cache_service.set_json(
+            f"job:{job.id}",
+            {
+                "status": job.status,
+                "created_at": job.created_at.isoformat(),
+            },
+            ttl=3600,
+        )
+        
+        return TryOnResponse.model_validate(job)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to create direct try-on job", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create try-on job: {str(e)}",
+        )
 
 
 @router.post("", response_model=TryOnResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -26,9 +168,20 @@ async def create_tryon_job(
     request: TryOnCreate,
     db: Session = Depends(get_db),
 ):
-    """Create a new try-on job.
-
-    The job will be queued for processing. Use the job_id to check status and retrieve results.
+    """Create a new try-on job using existing model and garment IDs.
+    
+    This endpoint requires:
+    - **model_id**: UUID of an already uploaded human model image
+    - **garment_id**: UUID of an already uploaded garment/clothing image
+    
+    Returns:
+    - **job_id**: ID to track the processing job
+    - **status**: Current job status  
+    - **result_url**: URL to the final fitted image (clothing on model) when completed
+    
+    The result will be the fitting of the clothing to the model image.
+    
+    Note: Use POST /direct for uploading both images in one request.
     """
     try:
         # Validate model exists
@@ -91,8 +244,16 @@ async def get_tryon_result(
     db: Session = Depends(get_db),
 ):
     """Get try-on job result.
-
-    Returns the complete job information including result URL if processing is complete.
+    
+    Returns the complete job information including the final fitted image URL.
+    
+    Response includes:
+    - **result_url**: URL to the final image showing the clothing fitted on the model
+    - **status**: Job processing status (queued, processing, completed, failed)
+    - **model_id**: ID of the human model used
+    - **garment_id**: ID of the clothing/garment used
+    
+    The result_url points to the final fitted image when status is "completed".
     """
     try:
         job = database.get_job_or_404(db, job_id)
