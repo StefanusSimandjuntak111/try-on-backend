@@ -3,8 +3,14 @@
 import json
 from typing import Any, Optional
 
-import redis
-from redis.exceptions import RedisError
+try:
+    import redis
+    from redis.exceptions import RedisError
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    redis = None
+    RedisError = Exception
 
 from app.config import settings
 from app.core.logging import get_logger
@@ -17,6 +23,11 @@ class CacheService:
 
     def __init__(self):
         """Initialize cache service."""
+        if not REDIS_AVAILABLE:
+            logger.warning("Redis not available - caching disabled")
+            self.redis_client = None
+            return
+        
         try:
             self.redis_client = redis.from_url(
                 settings.REDIS_URL,
@@ -27,8 +38,8 @@ class CacheService:
             # Test connection
             self.redis_client.ping()
             logger.info("Redis cache service initialized", url=settings.REDIS_URL)
-        except RedisError as e:
-            logger.error("Failed to initialize Redis cache", error=str(e))
+        except (RedisError, Exception) as e:
+            logger.warning("Failed to initialize Redis cache - caching disabled", error=str(e))
             self.redis_client = None
 
     def get(self, key: str) -> Optional[bytes]:

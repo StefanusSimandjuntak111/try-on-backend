@@ -88,8 +88,9 @@ async def create_tryon_job_direct(
             model_io,
             settings.S3_BUCKET_MODELS,
         )
-        model_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_MODELS}/{model_original}"
-        model_thumbnail_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_MODELS}/{model_thumbnail}"
+        # Generate URLs (handles both S3/MinIO and local storage)
+        model_url = storage_service.get_file_url(settings.S3_BUCKET_MODELS, model_original)
+        model_thumbnail_url = storage_service.get_file_url(settings.S3_BUCKET_MODELS, model_thumbnail)
         
         # Upload garment image
         garment_io.seek(0)
@@ -97,8 +98,8 @@ async def create_tryon_job_direct(
             garment_io,
             settings.S3_BUCKET_GARMENTS,
         )
-        garment_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_GARMENTS}/{garment_original}"
-        garment_thumbnail_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_GARMENTS}/{garment_thumbnail}"
+        garment_url = storage_service.get_file_url(settings.S3_BUCKET_GARMENTS, garment_original)
+        garment_thumbnail_url = storage_service.get_file_url(settings.S3_BUCKET_GARMENTS, garment_thumbnail)
         
         # Create model record
         model = database.create_model(
@@ -131,15 +132,19 @@ async def create_tryon_job_direct(
             garment_id=str(garment.id),
         )
         
-        # Trigger preprocessing and inference tasks
-        from app.workers.tasks import preprocess_model_task, preprocess_garment_task, tryon_inference_task
-        
-        # Preprocess both images
-        preprocess_model_task.delay(str(model.id))
-        preprocess_garment_task.delay(str(garment.id))
-        
-        # Trigger inference (will wait for preprocessing)
-        tryon_inference_task.delay(str(job.id))
+        # Trigger preprocessing and inference tasks (if Celery available)
+        try:
+            from app.workers.tasks import preprocess_model_task, preprocess_garment_task, tryon_inference_task
+            
+            # Preprocess both images
+            preprocess_model_task.delay(str(model.id))
+            preprocess_garment_task.delay(str(garment.id))
+            
+            # Trigger inference (will wait for preprocessing)
+            tryon_inference_task.delay(str(job.id))
+        except ImportError:
+            logger.warning("Celery not available - tasks will not run automatically")
+            # In Colab, you can call these functions directly if needed
         
         # Cache job status
         cache_service.set_json(
@@ -210,9 +215,13 @@ async def create_tryon_job(
         
         logger.info("Try-on job created", job_id=str(job.id), model_id=str(request.model_id), garment_id=str(request.garment_id))
         
-        # Trigger async processing task
-        from app.workers.tasks import tryon_inference_task
-        tryon_inference_task.delay(str(job.id))
+        # Trigger async processing task (if Celery available)
+        try:
+            from app.workers.tasks import tryon_inference_task
+            tryon_inference_task.delay(str(job.id))
+        except ImportError:
+            logger.warning("Celery not available - inference task will not run automatically")
+            # In Colab, you can call inference directly if needed
         
         # Cache job status
         cache_service.set_json(

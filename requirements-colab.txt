@@ -10,17 +10,32 @@ scipy==1.11.4
 imageio==2.31.5
 scikit-image==0.22.0
 
-# FastAPI (for API testing)
+# FastAPI (for API)
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
-# Utilities
+# Pydantic and validation
 pydantic==2.5.0
 pydantic-settings==2.1.0
+
+# Database (SQLite for Colab, no PostgreSQL needed)
+sqlalchemy==2.0.23
+alembic==1.12.1
+
+# Logging and utilities
+structlog==23.2.0
+python-dotenv==1.0.0
 requests==2.31.0
 tqdm==4.66.1
+httpx==0.25.2
 
-# Optional: For exposing API
+# Monitoring (optional)
+prometheus-client==0.19.0
+
+# For exposing API
 pyngrok
+
+# Note: Redis, Celery, PostgreSQL, MinIO are NOT included
+# Colab uses SQLite and direct function calls instead
 

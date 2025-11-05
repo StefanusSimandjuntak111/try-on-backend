@@ -1,8 +1,12 @@
 """FastAPI application entry point."""
 
+import os
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1.router import api_router
@@ -46,6 +50,12 @@ app.add_middleware(
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+# Mount static files for local storage (Colab mode)
+if os.environ.get("USE_LOCAL_STORAGE", "false").lower() == "true":
+    storage_path = Path("storage")
+    if storage_path.exists():
+        app.mount("/storage", StaticFiles(directory=str(storage_path)), name="storage")
 
 
 @app.on_event("startup")

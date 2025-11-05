@@ -1,14 +1,30 @@
 """S3/MinIO storage service."""
 
 import io
+import os
+from pathlib import Path
 from typing import BinaryIO, Optional
 from uuid import UUID, uuid4
 
-import boto3
-from botocore.client import Config
-from botocore.exceptions import ClientError
-from minio import Minio
-from minio.error import S3Error
+try:
+    import boto3
+    from botocore.client import Config
+    from botocore.exceptions import ClientError
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
+    boto3 = None
+    ClientError = Exception
+
+try:
+    from minio import Minio
+    from minio.error import S3Error
+    MINIO_AVAILABLE = True
+except ImportError:
+    MINIO_AVAILABLE = False
+    Minio = None
+    S3Error = Exception
+
 from PIL import Image
 
 from app.config import settings
@@ -17,23 +33,71 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Check if we should use local file storage (for Colab)
+USE_LOCAL_STORAGE = os.environ.get("USE_LOCAL_STORAGE", "false").lower() == "true"
+
 
 class StorageService:
     """Storage service for S3-compatible storage."""
 
     def __init__(self):
         """Initialize storage service."""
+        # Use local file storage if enabled (for Colab)
+        if USE_LOCAL_STORAGE:
+            self._init_local_storage()
+            return
+        
         self.use_minio = settings.S3_ENDPOINT.startswith("http://localhost") or settings.S3_ENDPOINT.startswith("http://127.0.0.1")
         
-        if self.use_minio:
-            self._init_minio()
+        if self.use_minio and MINIO_AVAILABLE:
+            try:
+                self._init_minio()
+                self._ensure_buckets()
+            except Exception as e:
+                logger.warning("MinIO initialization failed, falling back to local storage", error=str(e))
+                self._init_local_storage()
+        elif BOTO3_AVAILABLE:
+            try:
+                self._init_boto3()
+                self._ensure_buckets()
+            except Exception as e:
+                logger.warning("S3 initialization failed, falling back to local storage", error=str(e))
+                self._init_local_storage()
         else:
-            self._init_boto3()
-        
-        self._ensure_buckets()
+            logger.warning("No S3/MinIO available, using local file storage")
+            self._init_local_storage()
 
+    def _init_local_storage(self) -> None:
+        """Initialize local file storage (for Colab or when S3/MinIO unavailable)."""
+        self.storage_type = "local"
+        self.base_dir = Path("storage")
+        self.base_dir.mkdir(exist_ok=True)
+        
+        # Create bucket directories
+        for bucket in [settings.S3_BUCKET_MODELS, settings.S3_BUCKET_GARMENTS, settings.S3_BUCKET_RESULTS]:
+            (self.base_dir / bucket).mkdir(parents=True, exist_ok=True)
+        
+        # For local storage, we'll use file:// URLs or relative paths
+        self.base_url = "/storage"  # FastAPI can serve static files from /storage
+        
+        logger.info("Initialized local file storage", base_dir=str(self.base_dir))
+    
+    def get_file_url(self, bucket: str, object_name: str) -> str:
+        """Get URL for a stored file (works for all storage types)."""
+        if self.storage_type == "local":
+            return f"{self.base_url}/{bucket}/{object_name}"
+        elif self.storage_type == "minio":
+            return f"{settings.S3_ENDPOINT}/{bucket}/{object_name}"
+        elif self.storage_type == "s3":
+            return f"{settings.S3_ENDPOINT}/{bucket}/{object_name}"
+        else:
+            return f"{settings.S3_ENDPOINT}/{bucket}/{object_name}"
+    
     def _init_minio(self) -> None:
         """Initialize MinIO client."""
+        if not MINIO_AVAILABLE:
+            raise StorageError("MinIO library not available")
+        
         try:
             from urllib.parse import urlparse
             parsed = urlparse(settings.S3_ENDPOINT)
@@ -43,6 +107,7 @@ class StorageService:
                 secret_key=settings.S3_SECRET_KEY,
                 secure=settings.S3_USE_SSL,
             )
+            self.storage_type = "minio"
             logger.info("Initialized MinIO client", endpoint=settings.S3_ENDPOINT)
         except Exception as e:
             logger.error("Failed to initialize MinIO client", error=str(e))
@@ -50,6 +115,9 @@ class StorageService:
 
     def _init_boto3(self) -> None:
         """Initialize boto3 S3 client."""
+        if not BOTO3_AVAILABLE:
+            raise StorageError("boto3 library not available")
+        
         try:
             self.s3_client = boto3.client(
                 "s3",
@@ -60,6 +128,7 @@ class StorageService:
                 use_ssl=settings.S3_USE_SSL,
                 config=Config(signature_version="s3v4"),
             )
+            self.storage_type = "s3"
             logger.info("Initialized boto3 S3 client", endpoint=settings.S3_ENDPOINT)
         except Exception as e:
             logger.error("Failed to initialize boto3 client", error=str(e))
@@ -117,7 +186,14 @@ class StorageService:
         try:
             file_data.seek(0)
             
-            if self.use_minio:
+            if self.storage_type == "local":
+                # Local file storage
+                file_path = self.base_dir / bucket / object_name
+                with open(file_path, "wb") as f:
+                    f.write(file_data.read())
+                logger.info("File uploaded to local storage", bucket=bucket, object_name=object_name)
+                return object_name
+            elif self.storage_type == "minio" and self.use_minio:
                 # Get file size
                 file_data.seek(0, 2)
                 file_size = file_data.tell()
@@ -131,7 +207,7 @@ class StorageService:
                     part_size=10 * 1024 * 1024,
                     content_type=content_type,
                 )
-            else:
+            elif self.storage_type == "s3":
                 file_data.seek(0)
                 self.s3_client.upload_fileobj(
                     file_data,
@@ -139,10 +215,12 @@ class StorageService:
                     object_name,
                     ExtraArgs={"ContentType": content_type},
                 )
+            else:
+                raise StorageError("Storage not properly initialized")
             
             logger.info("File uploaded", bucket=bucket, object_name=object_name)
             return object_name
-        except (S3Error, ClientError) as e:
+        except (S3Error, ClientError, Exception) as e:
             logger.error("Failed to upload file", bucket=bucket, error=str(e))
             raise StorageError(f"Failed to upload file: {str(e)}")
 
@@ -157,18 +235,27 @@ class StorageService:
             File content as bytes
         """
         try:
-            if self.use_minio:
+            if self.storage_type == "local":
+                # Local file storage
+                file_path = self.base_dir / bucket / object_name
+                if not file_path.exists():
+                    raise StorageError(f"File not found: {object_name}")
+                with open(file_path, "rb") as f:
+                    data = f.read()
+            elif self.storage_type == "minio" and self.use_minio:
                 response = self.minio_client.get_object(bucket, object_name)
                 data = response.read()
                 response.close()
                 response.release_conn()
-            else:
+            elif self.storage_type == "s3":
                 response = self.s3_client.get_object(Bucket=bucket, Key=object_name)
                 data = response["Body"].read()
+            else:
+                raise StorageError("Storage not properly initialized")
             
             logger.debug("File downloaded", bucket=bucket, object_name=object_name)
             return data
-        except (S3Error, ClientError) as e:
+        except (S3Error, ClientError, Exception) as e:
             logger.error("Failed to download file", bucket=bucket, object_name=object_name, error=str(e))
             raise StorageError(f"Failed to download file: {str(e)}")
 
@@ -180,13 +267,21 @@ class StorageService:
             object_name: Object name
         """
         try:
-            if self.use_minio:
+            if self.storage_type == "local":
+                # Local file storage
+                file_path = self.base_dir / bucket / object_name
+                if file_path.exists():
+                    file_path.unlink()
+                    logger.info("File deleted from local storage", bucket=bucket, object_name=object_name)
+            elif self.storage_type == "minio" and self.use_minio:
                 self.minio_client.remove_object(bucket, object_name)
-            else:
+                logger.info("File deleted", bucket=bucket, object_name=object_name)
+            elif self.storage_type == "s3":
                 self.s3_client.delete_object(Bucket=bucket, Key=object_name)
-            
-            logger.info("File deleted", bucket=bucket, object_name=object_name)
-        except (S3Error, ClientError) as e:
+                logger.info("File deleted", bucket=bucket, object_name=object_name)
+            else:
+                raise StorageError("Storage not properly initialized")
+        except (S3Error, ClientError, Exception) as e:
             logger.error("Failed to delete file", bucket=bucket, object_name=object_name, error=str(e))
             raise StorageError(f"Failed to delete file: {str(e)}")
 
@@ -204,17 +299,26 @@ class StorageService:
             Presigned URL
         """
         try:
-            if self.use_minio:
+            if self.storage_type == "local":
+                # For local storage, return a file path (Colab can serve files directly)
+                file_path = self.base_dir / bucket / object_name
+                if not file_path.exists():
+                    raise StorageError(f"File not found: {object_name}")
+                # Return relative path - in Colab, files can be accessed directly
+                return f"/storage/{bucket}/{object_name}"
+            elif self.storage_type == "minio" and self.use_minio:
                 from datetime import timedelta
                 url = self.minio_client.presigned_get_object(
                     bucket, object_name, expires=timedelta(seconds=expiration)
                 )
-            else:
+            elif self.storage_type == "s3":
                 url = self.s3_client.generate_presigned_url(
                     "get_object",
                     Params={"Bucket": bucket, "Key": object_name},
                     ExpiresIn=expiration,
                 )
+            else:
+                raise StorageError("Storage not properly initialized")
             
             return url
         except (S3Error, ClientError) as e:

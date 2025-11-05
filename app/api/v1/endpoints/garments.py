@@ -63,9 +63,9 @@ async def upload_garment(
             settings.S3_BUCKET_GARMENTS,
         )
         
-        # Generate URLs
-        original_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_GARMENTS}/{original_name}"
-        thumbnail_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_GARMENTS}/{thumbnail_name}"
+        # Generate URLs (handles both S3/MinIO and local storage)
+        original_url = storage_service.get_file_url(settings.S3_BUCKET_GARMENTS, original_name)
+        thumbnail_url = storage_service.get_file_url(settings.S3_BUCKET_GARMENTS, thumbnail_name)
         
         # Create database record
         garment = database.create_garment(
@@ -78,9 +78,13 @@ async def upload_garment(
         
         logger.info("Garment uploaded", garment_id=str(garment.id), name=name)
         
-        # Trigger async preprocessing task
-        from app.workers.tasks import preprocess_garment_task
-        preprocess_garment_task.delay(str(garment.id))
+        # Trigger async preprocessing task (if Celery available)
+        try:
+            from app.workers.tasks import preprocess_garment_task
+            preprocess_garment_task.delay(str(garment.id))
+        except ImportError:
+            logger.warning("Celery not available - preprocessing will not run automatically")
+            # In Colab, you can call preprocessing directly if needed
         
         return UploadResponse(
             id=garment.id,

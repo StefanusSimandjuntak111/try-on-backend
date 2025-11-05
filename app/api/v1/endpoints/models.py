@@ -63,9 +63,9 @@ async def upload_model(
             settings.S3_BUCKET_MODELS,
         )
         
-        # Generate URLs
-        original_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_MODELS}/{original_name}"
-        thumbnail_url = f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET_MODELS}/{thumbnail_name}"
+        # Generate URLs (handles both S3/MinIO and local storage)
+        original_url = storage_service.get_file_url(settings.S3_BUCKET_MODELS, original_name)
+        thumbnail_url = storage_service.get_file_url(settings.S3_BUCKET_MODELS, thumbnail_name)
         
         # Create database record
         model = database.create_model(
@@ -78,9 +78,13 @@ async def upload_model(
         
         logger.info("Model uploaded", model_id=str(model.id), name=name)
         
-        # Trigger async preprocessing task
-        from app.workers.tasks import preprocess_model_task
-        preprocess_model_task.delay(str(model.id))
+        # Trigger async preprocessing task (if Celery available)
+        try:
+            from app.workers.tasks import preprocess_model_task
+            preprocess_model_task.delay(str(model.id))
+        except ImportError:
+            logger.warning("Celery not available - preprocessing will not run automatically")
+            # In Colab, you can call preprocessing directly if needed
         
         return UploadResponse(
             id=model.id,
