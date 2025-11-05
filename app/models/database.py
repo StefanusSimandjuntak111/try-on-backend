@@ -21,7 +21,7 @@ class Model(Base):
     original_image_url = Column(Text, nullable=False)
     thumbnail_url = Column(Text, nullable=True)
     preprocessed_data = Column(JSON, nullable=True)  # Store parsing, pose data
-    metadata = Column(JSON, nullable=True)  # Additional metadata
+    extra_metadata = Column("metadata", JSON, nullable=True)  # Additional metadata (mapped to 'metadata' column)
     status = Column(
         String(50), nullable=False, default="processing"
     )  # 'processing', 'ready', 'failed'
@@ -32,6 +32,16 @@ class Model(Base):
 
     # Relationships
     tryon_jobs = relationship("TryOnJob", back_populates="model", cascade="all, delete-orphan")
+
+    @property
+    def metadata(self) -> Any:
+        """Property to access extra_metadata as metadata for API compatibility."""
+        return self.extra_metadata
+
+    @metadata.setter
+    def metadata(self, value: Any) -> None:
+        """Property setter for metadata."""
+        self.extra_metadata = value
 
     def __repr__(self) -> str:
         return f"<Model(id={self.id}, name={self.name}, status={self.status})>"
@@ -47,7 +57,7 @@ class Garment(Base):
     original_image_url = Column(Text, nullable=False)
     thumbnail_url = Column(Text, nullable=True)
     preprocessed_data = Column(JSON, nullable=True)  # Store segmentation data
-    metadata = Column(JSON, nullable=True)  # size, color, category
+    extra_metadata = Column("metadata", JSON, nullable=True)  # size, color, category (mapped to 'metadata' column)
     status = Column(
         String(50), nullable=False, default="processing"
     )  # 'processing', 'ready', 'failed'
@@ -60,6 +70,16 @@ class Garment(Base):
     tryon_jobs = relationship(
         "TryOnJob", back_populates="garment", cascade="all, delete-orphan"
     )
+
+    @property
+    def metadata(self) -> Any:
+        """Property to access extra_metadata as metadata for API compatibility."""
+        return self.extra_metadata
+
+    @metadata.setter
+    def metadata(self, value: Any) -> None:
+        """Property setter for metadata."""
+        self.extra_metadata = value
 
     def __repr__(self) -> str:
         return f"<Garment(id={self.id}, name={self.name}, status={self.status})>"

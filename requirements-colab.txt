@@ -1,6 +1,7 @@
 # ML Libraries (with CUDA support)
-torch==2.1.0
-torchvision==0.16.0
+# Using 2.3.0+cu118 as 2.1.0 is no longer available from PyTorch index
+torch==2.3.0
+torchvision==0.18.0
 numpy==1.24.3
 opencv-python==4.8.1.78
 Pillow==10.1.0

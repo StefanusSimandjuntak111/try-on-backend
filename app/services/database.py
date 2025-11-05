@@ -51,7 +51,7 @@ def create_model(
         original_image_url=original_image_url,
         thumbnail_url=thumbnail_url,
         name=name,
-        metadata=metadata,
+        extra_metadata=metadata,
         status="processing",
     )
     db.add(model)
@@ -78,7 +78,7 @@ def update_model(
     if preprocessed_data is not None:
         model.preprocessed_data = preprocessed_data
     if metadata is not None:
-        model.metadata = metadata
+        model.extra_metadata = metadata
     
     db.commit()
     db.refresh(model)
@@ -135,7 +135,7 @@ def create_garment(
         original_image_url=original_image_url,
         thumbnail_url=thumbnail_url,
         name=name,
-        metadata=metadata,
+        extra_metadata=metadata,
         status="processing",
     )
     db.add(garment)
@@ -162,7 +162,7 @@ def update_garment(
     if preprocessed_data is not None:
         garment.preprocessed_data = preprocessed_data
     if metadata is not None:
-        garment.metadata = metadata
+        garment.extra_metadata = metadata
     
     db.commit()
     db.refresh(garment)
