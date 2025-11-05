@@ -122,6 +122,24 @@ Once the server is running, access the interactive API documentation at:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
+For detailed API usage and examples, see [API_DOCUMENTATION.md](API_DOCUMENTATION.md).
+
+### Quick Start - Try-On API
+
+**Direct upload (recommended):**
+```bash
+curl -X POST "http://localhost:8000/api/v1/tryon/direct" \
+  -F "model_file=@person.jpg" \
+  -F "garment_file=@clothing.jpg"
+```
+
+**Get result:**
+```bash
+curl "http://localhost:8000/api/v1/tryon/{job_id}"
+```
+
+The response contains `result_url` which points to the final fitted image (clothing on model).
+
 ## 🏗️ Project Structure
 
 ```

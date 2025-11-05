@@ -86,6 +86,53 @@ hrviton = get_hrviton_model()
 
 ### Option 1: Using ngrok (Recommended for Public Access)
 
+**IMPORTANT:** Start the server FIRST, then connect ngrok. The server must be running before ngrok can connect.
+
+**Step 1: Start the server**
+
+```python
+import subprocess
+import time
+import requests
+from multiprocessing import Process
+
+def run_server():
+    """Run FastAPI server in a separate process."""
+    import os
+    os.environ["ML_DEVICE"] = "cuda" if torch.cuda.is_available() else "cpu"
+    os.environ["DATABASE_URL"] = "sqlite:///./test.db"
+    
+    # Run uvicorn server
+    import uvicorn
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        log_level="info"
+    )
+
+# Start server in background process
+print("🚀 Starting FastAPI server...")
+server_process = Process(target=run_server, daemon=True)
+server_process.start()
+
+# Wait for server to start
+print("⏳ Waiting for server to start...")
+for i in range(30):
+    try:
+        response = requests.get("http://localhost:8000/", timeout=2)
+        if response.status_code == 200:
+            print("✅ Server is running!")
+            break
+    except:
+        if i < 29:
+            time.sleep(1)
+        else:
+            raise Exception("Server did not start within 30 seconds")
+```
+
+**Step 2: Connect ngrok (AFTER server is running)**
+
 ```python
 from pyngrok import ngrok
 
@@ -94,27 +141,15 @@ NGROK_AUTHTOKEN = "your_token_here"  # Optional
 if NGROK_AUTHTOKEN:
     ngrok.set_auth_token(NGROK_AUTHTOKEN)
 
-# Start tunnel
-public_url = ngrok.connect(8000)
-print(f"Public URL: {public_url}")
-```
-
-Then start the server:
-
-```python
-import subprocess
-import threading
-
-def run_server():
-    subprocess.run([
-        "python", "-m", "uvicorn",
-        "app.main:app",
-        "--host", "0.0.0.0",
-        "--port", "8000"
-    ])
-
-server_thread = threading.Thread(target=run_server, daemon=True)
-server_thread.start()
+# Verify server is running
+response = requests.get("http://localhost:8000/", timeout=2)
+if response.status_code == 200:
+    # Start ngrok tunnel
+    public_url = ngrok.connect(8000, bind_tls=True)
+    print(f"🌐 Public URL: {public_url}")
+    print(f"📚 API Docs: {public_url}/docs")
+else:
+    print("❌ Server is not running. Please start it first.")
 ```
 
 ### Option 2: Local Only
@@ -182,6 +217,27 @@ drive.mount('/content/drive')
 ```python
 # Kill existing process
 !lsof -ti:8000 | xargs kill -9
+```
+
+### ngrok Connection Refused (ERR_NGROK_8012)
+
+This error means ngrok can't connect to the server. **The server must be running BEFORE connecting ngrok.**
+
+**Solution:**
+1. Make sure you've run the server cell first
+2. Wait for "✅ Server is running!" message
+3. Then run the ngrok cell
+4. Verify server is running: `requests.get("http://localhost:8000/")`
+
+**Check if server is running:**
+```python
+import requests
+try:
+    response = requests.get("http://localhost:8000/", timeout=2)
+    print(f"✅ Server is running (Status: {response.status_code})")
+except Exception as e:
+    print(f"❌ Server is NOT running: {e}")
+    print("Please start the server first!")
 ```
 
 ### Model Weights Not Found
